@@ -1,0 +1,1828 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ICU Encoding Dashboard</title>
+
+  <!-- TailwindCSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- XLSX parsing + Excel export -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <!-- jsPDF + AutoTable -->
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.5.29/dist/jspdf.plugin.autotable.min.js"></script>
+
+  <style>
+    .scrollbar-hide::-webkit-scrollbar { display: none; }
+    .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+  </style>
+</head>
+
+<body class="min-h-screen text-slate-100
+bg-[radial-gradient(1200px_600px_at_10%_-10%,rgba(59,130,246,0.30),transparent_60%),radial-gradient(900px_500px_at_90%_0%,rgba(34,197,94,0.20),transparent_55%),radial-gradient(900px_500px_at_40%_110%,rgba(244,63,94,0.18),transparent_55%),linear-gradient(180deg,#020617,#0b1220,#020617)]">
+
+  <!-- HEADER -->
+  <div class="sticky top-0 z-30 backdrop-blur bg-slate-950/70 border-b border-white/10">
+    <div class="px-4 py-3 flex items-center justify-between gap-3">
+      <div class="flex items-center gap-3 min-w-0">
+        <div class="w-2.5 h-2.5 rounded-full bg-blue-500 shadow-[0_0_18px_rgba(59,130,246,0.9)]"></div>
+        <div class="font-extrabold tracking-wide truncate">ICU Encoding Dashboard</div>
+        <div id="pillStatus" class="text-xs px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-300 font-bold">Loading…</div>
+        <div id="pillSelected" class="hidden md:inline text-xs px-2 py-1 rounded-full border border-white/10 bg-white/5 text-slate-300 font-bold">—</div>
+      </div>
+
+      <div class="flex items-center gap-2 flex-wrap justify-end">
+        <button class="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 font-extrabold" onclick="refreshAll()">Refresh</button>
+
+        <button class="px-3 py-2 rounded-xl border border-emerald-400/30 bg-emerald-500/10 hover:bg-emerald-500/15 font-extrabold" onclick="exportAllExcel()">Export All (Excel)</button>
+        <button class="px-3 py-2 rounded-xl border border-emerald-400/30 bg-emerald-500/10 hover:bg-emerald-500/15 font-extrabold" onclick="exportAllPDF()">Export All (PDF)</button>
+
+        <button class="px-3 py-2 rounded-xl border border-amber-400/30 bg-amber-500/10 hover:bg-amber-500/15 font-extrabold" onclick="exportZeroExcel()">Export Zero (Excel)</button>
+        <button class="px-3 py-2 rounded-xl border border-amber-400/30 bg-amber-500/10 hover:bg-amber-500/15 font-extrabold" onclick="exportZeroPDF()">Export Zero (PDF)</button>
+
+        <button id="btnUndo" class="px-3 py-2 rounded-xl border border-rose-400/30 bg-rose-500/10 hover:bg-rose-500/15 font-extrabold disabled:opacity-50" onclick="undoLast()" disabled>Undo</button>
+
+        <button class="px-3 py-2 rounded-xl border border-pink-400/30 bg-pink-500/10 hover:bg-pink-500/15 font-extrabold" onclick="toggleFavoritesPanel()">Favorites</button>
+      </div>
+    </div>
+
+    <!-- VIEW TABS -->
+    <div class="px-4 pb-3 flex flex-wrap gap-2 items-center justify-between">
+      <div class="flex gap-2 flex-wrap">
+        <button id="viewBtnItems" class="px-3 py-2 rounded-xl font-extrabold border border-blue-400/30 bg-blue-500/15 hover:bg-blue-500/20" onclick="switchView('ITEMS')">Items</button>
+        <button id="viewBtnZero" class="px-3 py-2 rounded-xl font-extrabold border border-white/10 bg-white/5 hover:bg-white/10" onclick="switchView('ZERO')">
+          Zero Stock <span id="zeroCountBadge" class="ml-2 text-xs px-2 py-0.5 rounded-full border border-white/10 bg-black/20">0</span>
+        </button>
+        
+        <button id="viewBtnZeroEmail" class="px-3 py-2 rounded-xl font-extrabold border border-white/10 bg-white/5 hover:bg-white/10"
+                onclick="switchView('ZEROEMAIL')">
+          Zero Stock Email <span id="zeroEmailCountBadge" class="ml-2 text-xs px-2 py-0.5 rounded-full border border-white/10 bg-black/20">0</span>
+        </button>
+<button id="viewBtnUnmatched" class="px-3 py-2 rounded-xl font-extrabold border border-white/10 bg-white/5 hover:bg-white/10" onclick="switchView('UNMATCHED')">
+          Unmatched <span id="unmatchedCountBadge" class="ml-2 text-xs px-2 py-0.5 rounded-full border border-white/10 bg-black/20">0</span>
+        </button>
+      </div>
+
+      <!-- CONTROLS -->
+      <div id="itemsControls" class="flex flex-col md:flex-row gap-3 md:items-center md:justify-between w-full mt-3">
+        <div class="flex gap-2 flex-wrap">
+          <button id="btnSupplies" class="px-3 py-2 rounded-xl font-extrabold border border-blue-400/30 bg-blue-500/15 hover:bg-blue-500/20" onclick="switchDataset('SUPPLY')">Supplies</button>
+          <button id="btnServices" class="px-3 py-2 rounded-xl font-extrabold border border-white/10 bg-white/5 hover:bg-white/10" onclick="switchDataset('SERVICE')">Services</button>
+        </div>
+
+        <!-- GLOBAL SEARCH -->
+        <div class="flex-1 md:max-w-xl">
+          <input id="searchBox" type="text"
+                 class="w-full px-4 py-2 rounded-2xl border border-white/10 bg-white/5 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                 placeholder="Search (ALL categories) by name, code, or category…"
+                 oninput="renderMain()" />
+        </div>
+      </div>
+    </div>
+
+    <!-- CATEGORY BAR -->
+    <div id="categoryWrap" class="px-4 pb-3">
+      <div id="catBar" class="flex flex-wrap gap-2 pb-2"></div>
+      <div id="metaLine" class="mt-2 text-xs text-slate-300/80 font-semibold">—</div>
+    </div>
+  </div>
+
+  <!-- LOGIN -->
+  <div id="loginOverlay" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+    <div class="w-full max-w-md rounded-3xl border border-white/10 bg-slate-900/80 backdrop-blur p-5 shadow-2xl">
+      <div class="text-lg font-extrabold">Login</div>
+      <div class="text-sm text-slate-300 mt-1">Username/password as requested.</div>
+      <div class="mt-4 grid gap-3">
+        <input id="loginUser" class="w-full px-4 py-2 rounded-2xl border border-white/10 bg-white/5 focus:outline-none" type="text" value="icu" placeholder="Username">
+        <input id="loginPass" class="w-full px-4 py-2 rounded-2xl border border-white/10 bg-white/5 focus:outline-none" type="password" value="ghonim" placeholder="Password">
+        <button class="px-4 py-2 rounded-2xl border border-blue-400/30 bg-blue-500/15 hover:bg-blue-500/20 font-extrabold" onclick="doLogin()">Sign in</button>
+      </div>
+      <div class="text-xs text-slate-400 mt-3">Simple login only.</div>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div id="app" class="hidden px-4 py-4">
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+
+      <!-- LEFT -->
+      <div class="lg:col-span-4 rounded-3xl border border-white/10 bg-white/5 p-4 shadow-xl">
+        <div class="font-extrabold text-base">Stock (XLS/XLSX)</div>
+        <div class="text-sm text-slate-300 mt-1">
+          Upload stock file to match quantities (Supplies only). If not uploaded, it keeps last saved quantities.
+        </div>
+
+        <div class="mt-4 grid gap-3">
+          <input id="xlsFile" type="file" accept=".xls,.xlsx"
+                 class="w-full px-4 py-2 rounded-2xl border border-white/10 bg-white/5">
+          <button class="px-4 py-2 rounded-2xl border border-blue-400/30 bg-blue-500/15 hover:bg-blue-500/20 font-extrabold" onclick="processXls()">
+            Analyze & Match XLS (NAME first)
+          </button>
+          <div id="lastMeta" class="text-xs text-slate-300/80 font-semibold">—</div>
+        </div>
+
+        <div class="mt-4 rounded-2xl border border-white/10 bg-black/20 p-3">
+          <div class="font-extrabold">Notes</div>
+          <ul class="text-sm text-slate-300 mt-2 list-disc pl-5 space-y-1">
+            <li>❤️ Favorites are saved in this browser (persist when reopening).</li>
+            <li>Supplies: Copy = deduct QTY (-1).</li>
+            <li>Services: Copy only (no Qty).</li>
+            <li>Search is GLOBAL across all categories (within selected dataset).</li>
+            <li>Unmatched XLS: you can manually override suggested category (saved).</li>
+            <li>Any item (matched/unmatched supplies + services) can be moved to a different category using the dropdown (saved ✅).</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- RIGHT -->
+      <div class="lg:col-span-8 rounded-3xl border border-white/10 bg-white/5 p-4 shadow-xl">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div id="rightTitle" class="text-base font-extrabold truncate">Items</div>
+            <div id="rightSub" class="text-sm text-slate-300">—</div>
+          </div>
+        </div>
+
+        <!-- ITEMS VIEW -->
+        <div id="viewItems" class="mt-4">
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead class="text-slate-300/80">
+                <tr class="border-b border-white/10">
+                  <th class="py-2 px-2 text-left w-16">Sticker</th>
+                  <th class="py-2 px-2 text-left w-10">Fav</th>
+                  <th class="py-2 px-2 text-left w-52">Item Code</th>
+                  <th class="py-2 px-2 text-left">Item Name</th>
+                  <th class="py-2 px-2 text-left w-72">Category</th>
+                  <th id="thQty" class="py-2 px-2 text-left w-28 hidden">Qty</th>
+                  <th class="py-2 px-2 text-left w-28">Action</th>
+                </tr>
+              </thead>
+              <tbody id="itemsBody"></tbody>
+            </table>
+          </div>
+          <div id="emptyState" class="hidden mt-6 text-slate-300 font-semibold">No items found.</div>
+        </div>
+
+        <!-- ZERO VIEW -->
+        <div id="viewZero" class="hidden mt-4">
+          <div class="flex items-center justify-between gap-3">
+            <div class="font-extrabold">Zero Stock Supplies</div>
+            <button class="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 font-extrabold" onclick="renderZeroStock()">Refresh List</button>
+          </div>
+          <div class="mt-3 text-sm text-slate-300">Shows supplies with Qty = 0.</div>
+
+          <div class="mt-4 overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead class="text-slate-300/80">
+                <tr class="border-b border-white/10">
+                  <th class="py-2 px-2 text-left w-20">Sticker</th>
+                  <th class="py-2 px-2 text-left">Category</th>
+                  <th class="py-2 px-2 text-left w-56">Item Code</th>
+                  <th class="py-2 px-2 text-left">Item Name</th>
+                  <th class="py-2 px-2 text-left w-28">Copy</th>
+                </tr>
+              </thead>
+              <tbody id="zeroBody"></tbody>
+            </table>
+          </div>
+
+          <div id="zeroEmpty" class="hidden mt-6 text-slate-300 font-semibold">No zero-stock items.</div>
+        </div>
+
+
+        <!-- ZERO EMAIL VIEW -->
+        <div id="viewZeroEmail" class="hidden mt-4">
+          <div class="flex items-center justify-between gap-3 flex-wrap">
+            <div class="font-extrabold">Send Zero Stock (Excel) by Email</div>
+            <button class="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 font-extrabold" onclick="renderZeroEmail()">Refresh List</button>
+          </div>
+
+          <div class="mt-3 text-sm text-slate-300">
+            This will email an Excel file containing all supplies with Qty = 0.
+          </div>
+
+          <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+            <div class="md:col-span-2">
+              <label class="text-xs text-slate-300/80 font-bold">Recipient Email</label>
+              <input id="zeroEmailTo" type="email"
+                     class="mt-1 w-full px-4 py-2 rounded-2xl border border-white/10 bg-white/5 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                     placeholder="name@example.com">
+            </div>
+            <div>
+              <button id="btnSendZeroEmail"
+                      class="w-full px-4 py-2 rounded-2xl border border-amber-400/30 bg-amber-500/10 hover:bg-amber-500/15 font-extrabold disabled:opacity-50"
+                      onclick="sendZeroStockExcelEmail()">
+                Send Excel
+              </button>
+            </div>
+          </div>
+
+          <div class="mt-4 overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead class="text-slate-300/80">
+                <tr class="border-b border-white/10">
+                  <th class="py-2 px-2 text-left w-20">Sticker</th>
+                  <th class="py-2 px-2 text-left">Category</th>
+                  <th class="py-2 px-2 text-left w-56">Item Code</th>
+                  <th class="py-2 px-2 text-left">Item Name</th>
+                </tr>
+              </thead>
+              <tbody id="zeroEmailBody"></tbody>
+            </table>
+          </div>
+
+          <div id="zeroEmailEmpty" class="hidden mt-6 text-slate-300 font-semibold">No zero-stock items.</div>
+        </div>
+
+        <!-- UNMATCHED VIEW -->
+        <div id="viewUnmatched" class="hidden mt-4">
+          <div class="flex items-center justify-between gap-3">
+            <div class="font-extrabold">Unmatched</div>
+            <button class="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 font-extrabold" onclick="renderUnmatched()">Refresh</button>
+          </div>
+
+          <div class="mt-3 flex gap-2">
+            <button id="unmTabSup" class="flex-1 px-3 py-2 rounded-xl border border-blue-400/30 bg-blue-500/15 hover:bg-blue-500/20 font-extrabold" onclick="switchUnmatchedTab('SUP')">
+              Unmatched Supplies (Sheet)
+              <span id="unmSupBadge" class="ml-2 text-xs px-2 py-0.5 rounded-full border border-white/10 bg-black/20">0</span>
+            </button>
+            <button id="unmTabXls" class="flex-1 px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 font-extrabold" onclick="switchUnmatchedTab('XLS')">
+              Unmatched Stock (XLS)
+              <span id="unmXlsBadge" class="ml-2 text-xs px-2 py-0.5 rounded-full border border-white/10 bg-black/20">0</span>
+            </button>
+          </div>
+
+          <div class="mt-3">
+            <input id="unmSearch" class="w-full px-4 py-2 rounded-2xl border border-white/10 bg-white/5 focus:outline-none"
+                   placeholder="Search unmatched…" oninput="renderUnmatched()">
+          </div>
+
+          <!-- Unmatched Supplies -->
+          <div id="unmSupBlock" class="mt-4">
+            <div class="text-sm text-slate-300">These supplies exist in the Google Sheet but did not match your uploaded XLS.</div>
+            <div class="mt-4 overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="text-slate-300/80">
+                  <tr class="border-b border-white/10">
+                    <th class="py-2 px-2 text-left w-10">Select</th>
+                    <th class="py-2 px-2 text-left w-20">Sticker</th>
+                    <th class="py-2 px-2 text-left">Category</th>
+                    <th class="py-2 px-2 text-left w-56">Item Code</th>
+                    <th class="py-2 px-2 text-left">Item Name</th>
+                  </tr>
+                </thead>
+                <tbody id="unmSupBody"></tbody>
+              </table>
+            </div>
+            <div id="unmSupEmpty" class="hidden mt-6 text-slate-300 font-semibold">No unmatched supplies.</div>
+          </div>
+
+          <!-- Unmatched XLS -->
+          <div id="unmXlsBlock" class="hidden mt-4">
+            <div class="text-sm text-slate-300">These rows exist in the XLS but did not match any supply item (by name or code).</div>
+
+            <div class="mt-4 overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="text-slate-300/80">
+                  <tr class="border-b border-white/10">
+                    <th class="py-2 px-2 text-left w-10">Select</th>
+                    <th class="py-2 px-2 text-left w-56">XLS Code</th>
+                    <th class="py-2 px-2 text-left">XLS Name (override category)</th>
+                    <th class="py-2 px-2 text-left w-24">Qty</th>
+                  </tr>
+                </thead>
+                <tbody id="unmXlsBody"></tbody>
+              </table>
+            </div>
+            <div id="unmXlsEmpty" class="hidden mt-6 text-slate-300 font-semibold">No unmatched XLS rows.</div>
+
+            <div class="mt-3 text-xs text-slate-300/90 font-semibold">
+              Auto-category badge meaning:
+              <span class="ml-2 px-2 py-1 rounded-full border border-purple-400/40 bg-purple-500/10">MANUAL</span>
+              <span class="ml-2 px-2 py-1 rounded-full border border-emerald-400/40 bg-emerald-500/10">RULE</span>
+              <span class="ml-2 px-2 py-1 rounded-full border border-sky-400/40 bg-sky-500/10">SIMILARITY</span>
+              <span class="ml-2 px-2 py-1 rounded-full border border-rose-400/40 bg-rose-500/10">OTHER</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- FAVORITES PANEL -->
+  <div id="favPanel" class="fixed inset-y-0 right-0 w-full sm:w-[440px] z-40 hidden">
+    <div class="h-full bg-slate-950/80 backdrop-blur border-l border-white/10 shadow-2xl p-4 flex flex-col">
+      <div class="flex items-center justify-between gap-3">
+        <div class="font-extrabold text-lg">Favorites</div>
+        <button class="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 font-extrabold" onclick="toggleFavoritesPanel()">Close</button>
+      </div>
+
+      <div class="mt-3 flex gap-2">
+        <button id="favTabSup" class="flex-1 px-3 py-2 rounded-xl border border-pink-400/30 bg-pink-500/15 hover:bg-pink-500/20 font-extrabold" onclick="renderFavorites('SUPPLY')">Supplies</button>
+        <button id="favTabSrv" class="flex-1 px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 font-extrabold" onclick="renderFavorites('SERVICE')">Services</button>
+      </div>
+
+      <div class="mt-3">
+        <input id="favSearch" class="w-full px-4 py-2 rounded-2xl border border-white/10 bg-white/5 focus:outline-none"
+               placeholder="Search favorites by name…" oninput="renderFavorites()">
+      </div>
+
+      <div class="mt-4 flex-1 overflow-auto">
+        <div id="favList" class="space-y-2"></div>
+      </div>
+
+      <div class="mt-3 text-xs text-slate-400">
+        Favorites are saved in this browser (localStorage).
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST -->
+  <div id="toast" class="fixed right-4 bottom-4 hidden max-w-[560px] rounded-2xl border border-white/10 bg-slate-900/90 backdrop-blur px-4 py-3 shadow-2xl font-extrabold"></div>
+
+<script>
+  // =========================
+  // STATE
+  // =========================
+  let supplies = [];
+  let services = [];
+  let qtyState = {};
+  let lastMeta = null;
+
+  // unmatched XLS overrides (server)
+  let unmatchedOverrides = {}; // { rowKey: "Category Name" }
+
+  // item category overrides (server)
+  let categoryOverrides = {}; // { "SUPPLY|CODE:xxx": "New Cat", ... }
+
+  let selectedDataset = "SUPPLY"; // SUPPLY|SERVICE
+  let selectedCategory = "";
+  let lastAction = null; // { key, prevQty }
+
+  let currentView = "ITEMS"; // ITEMS|ZERO|UNMATCHED
+  let currentUnmatchedTab = "SUP"; // SUP|XLS
+
+  let unmatchedSupplies = [];
+  let unmatchedXlsRows = [];
+  let selectionUnmSup = new Set();
+  let selectionUnmXls = new Set();
+
+  // =========================
+  // FAVORITES (persist)
+  // =========================
+  const LS_FAV_SUP = "ICU_FAV_SUPPLIES_V1";
+  const LS_FAV_SRV = "ICU_FAV_SERVICES_V1";
+
+  function loadFavSet(dataset){
+    const key = dataset === "SUPPLY" ? LS_FAV_SUP : LS_FAV_SRV;
+    try{
+      const raw = localStorage.getItem(key);
+      const arr = raw ? JSON.parse(raw) : [];
+      return new Set(arr);
+    }catch(e){
+      return new Set();
+    }
+  }
+  function saveFavSet(dataset, set){
+    const key = dataset === "SUPPLY" ? LS_FAV_SUP : LS_FAV_SRV;
+    localStorage.setItem(key, JSON.stringify(Array.from(set)));
+  }
+  let favSup = loadFavSet("SUPPLY");
+  let favSrv = loadFavSet("SERVICE");
+
+  // =========================
+  // CATEGORY COLOR PALETTE
+  // =========================
+  const CAT_PALETTE = [
+    { bg:"rgba(59,130,246,0.22)", bd:"rgba(59,130,246,0.55)", glow:"rgba(59,130,246,0.35)" },
+    { bg:"rgba(34,197,94,0.18)",  bd:"rgba(34,197,94,0.55)",  glow:"rgba(34,197,94,0.30)" },
+    { bg:"rgba(244,63,94,0.16)",  bd:"rgba(244,63,94,0.55)",  glow:"rgba(244,63,94,0.30)" },
+    { bg:"rgba(245,158,11,0.18)", bd:"rgba(245,158,11,0.55)", glow:"rgba(245,158,11,0.30)" },
+    { bg:"rgba(168,85,247,0.18)", bd:"rgba(168,85,247,0.55)", glow:"rgba(168,85,247,0.30)" },
+    { bg:"rgba(20,184,166,0.18)", bd:"rgba(20,184,166,0.55)", glow:"rgba(20,184,166,0.30)" },
+    { bg:"rgba(14,165,233,0.18)", bd:"rgba(14,165,233,0.55)", glow:"rgba(14,165,233,0.30)" },
+    { bg:"rgba(236,72,153,0.16)", bd:"rgba(236,72,153,0.55)", glow:"rgba(236,72,153,0.30)" },
+  ];
+  function hashStyleForCategory(catName){
+    const s = String(catName || "");
+    let h = 0;
+    for(let i=0;i<s.length;i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return CAT_PALETTE[h % CAT_PALETTE.length];
+  }
+
+  // =========================
+  // STICKERS / SYMBOLS
+  // =========================
+  function norm(s){ return String(s||"").trim().toLowerCase(); }
+
+  function stickerForCategory(cat){
+    const c = norm(cat);
+    if(c.includes("iv") || c.includes("cannula")) return "🧪";
+    if(c.includes("syringe")) return "💉";
+    if(c.includes("mask") || c.includes("ppe")) return "😷";
+    if(c.includes("glove")) return "🧤";
+    if(c.includes("airway") || c.includes("tube") || c.includes("resp")) return "🫁";
+    if(c.includes("dressing") || c.includes("gauze") || c.includes("bandage")) return "🩹";
+    if(c.includes("catheter") || c.includes("urine")) return "🧻";
+    if(c.includes("lab") || c.includes("sample")) return "🧬";
+    if(c.includes("med")) return "💊";
+    if(c.includes("service")) return "🩺";
+    return "⭐";
+  }
+  function stickerForItem(it){
+    const n = norm(it.itemName);
+    if(n.includes("syringe")) return "💉";
+    if(n.includes("glove")) return "🧤";
+    if(n.includes("mask")) return "😷";
+    if(n.includes("gauze") || n.includes("dressing") || n.includes("bandage")) return "🩹";
+    if(n.includes("catheter")) return "🧻";
+    if(n.includes("iv") || n.includes("cannula")) return "🧪";
+    if(n.includes("needle")) return "📌";
+    if(n.includes("vial") || n.includes("amp") || n.includes("tablet") || n.includes("drug")) return "💊";
+    if(String(it.type||"").toUpperCase() === "SERVICE") return "🩺";
+    return "✨";
+  }
+
+  // =========================
+  // AUTO CATEGORY (UNMATCHED XLS) + BADGE METHOD
+  // =========================
+  const AUTO_CAT_RULES = [
+    { cat: "IV & Cannula", keys: ["iv", "cannula", "venflon", "branula", "angiocath"] },
+    { cat: "Syringes & Needles", keys: ["syringe", "needle", "scalp vein", "butterfly"] },
+    { cat: "PPE", keys: ["mask", "n95", "glove", "gown", "cap", "shoe cover", "apron", "face shield"] },
+    { cat: "Dressings", keys: ["gauze", "bandage", "dressing", "tape", "plaster", "swab"] },
+    { cat: "Airway & Respiratory", keys: ["ett", "endotracheal", "trache", "tracheostomy", "ambu", "neb", "nebul", "oxygen", "venturi", "hme", "filter", "circuit"] },
+    { cat: "Suction", keys: ["suction", "yankauer", "suction catheter", "sputum"] },
+    { cat: "Urinary", keys: ["foley", "urine", "urinary", "uro", "urine bag", "u bag"] },
+    { cat: "NG/Feeding", keys: ["ng", "ryle", "feeding", "peg", "gastro", "tube feeding"] },
+    { cat: "Lines & Central", keys: ["cvc", "central line", "triple lumen", "introducer", "arterial line"] },
+    { cat: "Lab & Sampling", keys: ["vacutainer", "edta", "citrate", "serum", "container", "specimen", "culture"] },
+    { cat: "Medications", keys: ["amp", "ampoule", "vial", "tab", "tablet", "capsule", "inj", "infusion", "solution"] },
+    { cat: "Disinfection", keys: ["alcohol", "chlorhex", "betadine", "iodine", "sanitizer", "disinfect"] },
+  ];
+
+  function cleanText(s){
+    return String(s || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function tokenSet(s){
+    const t = cleanText(s);
+    if(!t) return new Set();
+    return new Set(t.split(" ").filter(x => x.length >= 3));
+  }
+
+  function jaccard(aSet, bSet){
+    if(!aSet.size || !bSet.size) return 0;
+    let inter = 0;
+    for(const a of aSet) if(bSet.has(a)) inter++;
+    const union = aSet.size + bSet.size - inter;
+    return union ? inter / union : 0;
+  }
+
+  function ruleCategoryFromName(name){
+    const t = cleanText(name);
+    if(!t) return "";
+    for(const r of AUTO_CAT_RULES){
+      for(const k of r.keys){
+        if(t.includes(cleanText(k))) return r.cat;
+      }
+    }
+    return "";
+  }
+
+  function similarityCategoryFallback(name){
+    const nameTokens = tokenSet(name);
+    if(!nameTokens.size) return { cat:"", score:0 };
+
+    const cats = new Map();
+    for(const it of supplies){
+      const c = it.category || "Uncategorized";
+      if(!cats.has(c)) cats.set(c, new Set());
+      const s = cats.get(c);
+      for(const tok of tokenSet(it.itemName)) s.add(tok);
+    }
+
+    let bestCat = "";
+    let bestScore = 0;
+    for(const [cat, catTokens] of cats.entries()){
+      const score = jaccard(nameTokens, catTokens);
+      if(score > bestScore){
+        bestScore = score;
+        bestCat = cat;
+      }
+    }
+    return { cat: bestCat, score: bestScore };
+  }
+
+  function suggestedCategoryForXlsRow(name){
+    const ruleCat = ruleCategoryFromName(name);
+    if(ruleCat) return { category: ruleCat, method: "RULE" };
+
+    const sim = similarityCategoryFallback(name);
+    if(sim.cat && sim.score >= 0.18) return { category: sim.cat, method: "SIMILARITY" };
+
+    return { category: "Other / Review", method: "OTHER" };
+  }
+
+  function methodBadgeHtml(method){
+    if(method === "MANUAL"){
+      return `<span class="ml-2 text-[11px] px-2 py-0.5 rounded-full border border-purple-400/40 bg-purple-500/10 text-purple-100 font-extrabold">MANUAL</span>`;
+    }
+    if(method === "RULE"){
+      return `<span class="ml-2 text-[11px] px-2 py-0.5 rounded-full border border-emerald-400/40 bg-emerald-500/10 text-emerald-100 font-extrabold">RULE</span>`;
+    }
+    if(method === "SIMILARITY"){
+      return `<span class="ml-2 text-[11px] px-2 py-0.5 rounded-full border border-sky-400/40 bg-sky-500/10 text-sky-100 font-extrabold">SIMILARITY</span>`;
+    }
+    return `<span class="ml-2 text-[11px] px-2 py-0.5 rounded-full border border-rose-400/40 bg-rose-500/10 text-rose-100 font-extrabold">OTHER</span>`;
+  }
+
+  // =========================
+  // SAVED ✅ badge helper
+  // =========================
+  function showSavedBadge(badgeId){
+    const el = document.getElementById(badgeId);
+    if(!el) return;
+    el.classList.remove("hidden");
+    el.classList.add("animate-pulse");
+    setTimeout(() => {
+      el.classList.add("hidden");
+      el.classList.remove("animate-pulse");
+    }, 1200);
+  }
+
+  // =========================
+  // MANUAL OVERRIDE HELPERS
+  // =========================
+  function escapeHtml(s){
+    return String(s||"")
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;")
+      .replaceAll("'","&#039;");
+  }
+
+  function buildCategoryOptionsList(){
+    const set = new Set();
+    for(const it of supplies){
+      set.add(it.category || "Uncategorized");
+    }
+    const cats = Array.from(set).sort((a,b)=>a.localeCompare(b));
+    if(!cats.includes("Other / Review")) cats.push("Other / Review");
+    return cats;
+  }
+
+  function buildOverrideOptions(current){
+    const cats = buildCategoryOptionsList();
+    const cur = String(current || "").trim();
+
+    let html = `<option value="__AUTO__">AUTO (remove manual)</option>`;
+    for(const c of cats){
+      const sel = (c === cur) ? "selected" : "";
+      html += `<option value="${escapeHtml(c)}" ${sel}>${escapeHtml(c)}</option>`;
+    }
+    return html;
+  }
+
+  function setManualOverride(rowKey, category){
+    if(!unmatchedOverrides) unmatchedOverrides = {};
+
+    if(!category || category === "__AUTO__"){
+      delete unmatchedOverrides[rowKey];
+    } else {
+      unmatchedOverrides[rowKey] = category;
+    }
+
+    for(const r of unmatchedXlsRows){
+      const rk = r.rowKey || `X:${norm(r.code)}|${norm(r.name)}`;
+      if(rk === rowKey){
+        if(!category || category === "__AUTO__"){
+          const sug = suggestedCategoryForXlsRow(r.name);
+          r.suggestedCategory = sug.category;
+          r.method = sug.method;
+        } else {
+          r.suggestedCategory = category;
+          r.method = "MANUAL";
+        }
+      }
+    }
+
+    renderUnmatched();
+
+    google.script.run
+      .withSuccessHandler(res => {
+        if(res?.ok) toast("Override saved");
+        else toast("Override not saved");
+      })
+      .withFailureHandler(() => toast("Save override error"))
+      .setUnmatchedOverride(rowKey, category);
+  }
+
+  // =========================
+  // ITEM KEY (normalized) + category overrides
+  // =========================
+  function itemKey(it){
+    const code = String(it.itemCode || "").trim().toLowerCase();
+    if(code) return "CODE:" + code;
+    const name = String(it.itemName || "").trim().toLowerCase();
+    return "NAME:" + name;
+  }
+
+  function getAllCategoriesForType(itemType){
+    const t = String(itemType || "").toUpperCase();
+    const arr = (t === "SERVICE") ? services : supplies;
+
+    const set = new Set();
+    for(const it of arr){
+      set.add(it.category || (t==="SERVICE" ? "Services" : "Uncategorized"));
+    }
+
+    if(t==="SUPPLY"){
+      set.add("Uncategorized");
+      set.add("Other / Review");
+    } else {
+      set.add("Services");
+      set.add("Nursing Services");
+      set.add("Medical Services");
+    }
+
+    return Array.from(set).sort((a,b)=>a.localeCompare(b));
+  }
+
+  function buildItemCategoryOptions(itemType, currentCat){
+    const cats = getAllCategoriesForType(itemType);
+    const cur = String(currentCat || "").trim();
+    let html = "";
+    for(const c of cats){
+      const sel = (c === cur) ? "selected" : "";
+      html += `<option value="${escapeHtml(c)}" ${sel}>${escapeHtml(c)}</option>`;
+    }
+    return html;
+  }
+
+  function changeItemCategory(itemType, itemKeyStr, newCategory, badgeId){
+    const t = String(itemType || "").toUpperCase();
+    const storageKey = `${t}|${String(itemKeyStr||"")}`;
+
+    // update local immediately
+    categoryOverrides[storageKey] = newCategory;
+
+    const updateArray = (arr) => {
+      for(const it of arr){
+        const k = itemKey(it);
+        if(k === itemKeyStr && String(it.type||"").toUpperCase() === t){
+          it.category = newCategory;
+        }
+      }
+    };
+    if(t === "SUPPLY") updateArray(supplies);
+    else updateArray(services);
+
+    // render (no collapse)
+    ensureCategorySelected(false);
+    renderCategoryBar();
+    renderMain();
+    renderZeroStock();
+    if(currentView==="UNMATCHED") renderUnmatched();
+    if(!document.getElementById("favPanel").classList.contains("hidden")){
+      renderFavorites(t);
+    }
+
+    // save to server
+    google.script.run
+      .withSuccessHandler(res => {
+        if(res?.ok){
+          categoryOverrides = res.overrides || categoryOverrides;
+          showSavedBadge(badgeId);
+          toast("Category saved");
+        } else {
+          toast("Category save failed");
+        }
+      })
+      .withFailureHandler(() => toast("Category save error"))
+      .setItemCategoryOverride(t, itemKeyStr, newCategory);
+  }
+
+  // =========================
+  // UTILS
+  // =========================
+  function toast(msg){
+    const t = document.getElementById("toast");
+    t.textContent = msg;
+    t.classList.remove("hidden");
+    setTimeout(() => t.classList.add("hidden"), 2200);
+  }
+  function setStatus(s){ document.getElementById("pillStatus").textContent = s; }
+  function setSelectedPill(){
+    const pill = document.getElementById("pillSelected");
+    pill.textContent = (!selectedCategory) ? `${selectedDataset} • (no category)` : (selectedCategory==="__ALL__" ? `${selectedDataset} • All` : `${selectedDataset} • ${selectedCategory}`);
+  }
+
+  function srcItems(){
+    return selectedDataset === "SUPPLY" ? supplies : services;
+  }
+
+  // =========================
+  // LOGIN
+  // =========================
+  function doLogin(){
+    const u = document.getElementById("loginUser").value;
+    const p = document.getElementById("loginPass").value;
+
+    google.script.run.withSuccessHandler(res => {
+      if(res && res.ok){
+        document.getElementById("loginOverlay").classList.add("hidden");
+        document.getElementById("app").classList.remove("hidden");
+        refreshAll();
+      } else {
+        toast("Wrong username/password");
+      }
+    }).withFailureHandler(err => toast("Login error: " + (err?.message || err)))
+      .login(u,p);
+  }
+
+  // =========================
+  // VIEW SWITCH
+  // =========================
+  function switchView(v){
+    currentView = v;
+
+    const btnItems = document.getElementById("viewBtnItems");
+    const btnZero  = document.getElementById("viewBtnZero");
+    const btnUnm   = document.getElementById("viewBtnUnmatched");
+    const btnZeroEmail = document.getElementById("viewBtnZeroEmail");
+
+    btnItems.className = v==="ITEMS"
+      ? "px-3 py-2 rounded-xl font-extrabold border border-blue-400/30 bg-blue-500/15 hover:bg-blue-500/20"
+      : "px-3 py-2 rounded-xl font-extrabold border border-white/10 bg-white/5 hover:bg-white/10";
+
+    btnZero.className = v==="ZERO"
+      ? "px-3 py-2 rounded-xl font-extrabold border border-blue-400/30 bg-blue-500/15 hover:bg-blue-500/20"
+      : "px-3 py-2 rounded-xl font-extrabold border border-white/10 bg-white/5 hover:bg-white/10";
+
+    btnUnm.className = v==="UNMATCHED"
+      ? "px-3 py-2 rounded-xl font-extrabold border border-blue-400/30 bg-blue-500/15 hover:bg-blue-500/20"
+      : "px-3 py-2 rounded-xl font-extrabold border border-white/10 bg-white/5 hover:bg-white/10";
+
+    btnZeroEmail.className = v==="ZEROEMAIL"
+      ? "px-3 py-2 rounded-xl font-extrabold border border-blue-400/30 bg-blue-500/15 hover:bg-blue-500/20"
+      : "px-3 py-2 rounded-xl font-extrabold border border-white/10 bg-white/5 hover:bg-white/10";
+
+
+    document.getElementById("itemsControls").classList.toggle("hidden", v !== "ITEMS");
+    document.getElementById("categoryWrap").classList.toggle("hidden", v !== "ITEMS");
+
+    document.getElementById("viewItems").classList.toggle("hidden", v !== "ITEMS");
+    document.getElementById("viewZero").classList.toggle("hidden", v !== "ZERO");
+    document.getElementById("viewZeroEmail").classList.toggle("hidden", v !== "ZEROEMAIL");
+    document.getElementById("viewUnmatched").classList.toggle("hidden", v !== "UNMATCHED");
+
+    
+    if(v==="ZERO"){
+      selectedDataset = "SUPPLY";
+      renderZeroStock();
+      document.getElementById("rightTitle").textContent = "Zero Stock Supplies";
+      document.getElementById("rightSub").textContent = "Supplies only (Qty = 0).";
+    } else if(v==="ZEROEMAIL"){
+      selectedDataset = "SUPPLY";
+      renderZeroEmail();
+      document.getElementById("rightTitle").textContent = "Zero Stock Email";
+      document.getElementById("rightSub").textContent = "Send zero-stock list as Excel by email.";
+    } else if(v==="UNMATCHED"){
+      renderUnmatched();
+      document.getElementById("rightTitle").textContent = "Unmatched";
+      document.getElementById("rightSub").textContent = "Items not matched during the last XLS analysis.";
+    } else {
+      ensureCategorySelected(false);
+      renderCategoryBar();
+      renderMain();
+    }
+
+  }
+
+  function switchUnmatchedTab(t){
+    currentUnmatchedTab = t;
+
+    document.getElementById("unmSupBlock").classList.toggle("hidden", t !== "SUP");
+    document.getElementById("unmXlsBlock").classList.toggle("hidden", t !== "XLS");
+
+    document.getElementById("unmTabSup").className = t==="SUP"
+      ? "flex-1 px-3 py-2 rounded-xl border border-blue-400/30 bg-blue-500/15 hover:bg-blue-500/20 font-extrabold"
+      : "flex-1 px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 font-extrabold";
+
+    document.getElementById("unmTabXls").className = t==="XLS"
+      ? "flex-1 px-3 py-2 rounded-xl border border-blue-400/30 bg-blue-500/15 hover:bg-blue-500/20 font-extrabold"
+      : "flex-1 px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 font-extrabold";
+
+    renderUnmatched();
+  }
+
+  // =========================
+  // LOAD
+  // =========================
+  function refreshAll(){
+    setStatus("Loading…");
+    google.script.run.withSuccessHandler(data => {
+      supplies = data?.supplies || [];
+      services = data?.services || [];
+      categoryOverrides = data?.categoryOverrides || {};
+
+      document.getElementById("metaLine").textContent =
+        `Supplies tab: ${data?.meta?.suppliesTab || "—"} | Supplies: ${data?.meta?.suppliesCount || 0} | Services: ${data?.meta?.servicesCount || 0}`;
+
+      google.script.run.withSuccessHandler(q => {
+        qtyState = q?.qtyState || {};
+        lastMeta = q?.meta || null;
+        unmatchedOverrides = q?.overrides || {};
+
+        updateLastMetaUI();
+
+        ensureCategorySelected(true);
+        renderCategoryBar();
+        renderMain();
+        renderZeroStock();
+        renderZeroEmail();
+        updateUnmatchedBadges();
+
+        setStatus("Ready");
+      }).withFailureHandler(() => {
+        updateLastMetaUI();
+        ensureCategorySelected(true);
+        renderCategoryBar();
+        renderMain();
+        renderZeroStock();
+        renderZeroEmail();
+        updateUnmatchedBadges();
+        setStatus("Ready (qty error)");
+      }).getQtyState();
+
+    }).withFailureHandler(err => {
+      setStatus("Error");
+      toast("Google Sheet read error: " + (err?.message || err));
+    }).getDashboardData();
+  }
+
+  function updateLastMetaUI(){
+    const el = document.getElementById("lastMeta");
+    if(!lastMeta){
+      el.textContent = "No previous XLS uploaded yet.";
+      return;
+    }
+    el.textContent = `Last XLS: ${lastMeta.fileName || "—"} • Rows: ${lastMeta.rowsCount || "—"} • Uploaded: ${lastMeta.uploadedAtISO || "—"}`;
+  }
+
+  // =========================
+  // DATASET
+  // =========================
+  function switchDataset(ds){
+    selectedDataset = ds;
+
+    document.getElementById("btnSupplies").className =
+      ds==="SUPPLY"
+        ? "px-3 py-2 rounded-xl font-extrabold border border-blue-400/30 bg-blue-500/15 hover:bg-blue-500/20"
+        : "px-3 py-2 rounded-xl font-extrabold border border-white/10 bg-white/5 hover:bg-white/10";
+
+    document.getElementById("btnServices").className =
+      ds==="SERVICE"
+        ? "px-3 py-2 rounded-xl font-extrabold border border-blue-400/30 bg-blue-500/15 hover:bg-blue-500/20"
+        : "px-3 py-2 rounded-xl font-extrabold border border-white/10 bg-white/5 hover:bg-white/10";
+
+    ensureCategorySelected(true);
+    renderCategoryBar();
+    renderMain();
+  }
+
+  function ensureCategorySelected(forceReset=false){
+    const items = srcItems();
+    const cats = new Map();
+    for(const it of items){
+      const c = it.category || (selectedDataset==="SUPPLY" ? "Uncategorized" : "Services");
+      cats.set(c, (cats.get(c)||0)+1);
+    }
+    const sorted = Array.from(cats.entries()).sort((a,b)=>b[1]-a[1]);
+
+    if(!sorted.length){
+      selectedCategory = "";
+      setSelectedPill();
+      document.getElementById("rightTitle").textContent = "Items";
+      document.getElementById("rightSub").textContent = "—";
+      return;
+    }
+
+    if(forceReset || !selectedCategory || (selectedCategory!=="__ALL__" && !cats.has(selectedCategory))){
+      selectedCategory = "__ALL__";
+    }
+
+    setSelectedPill();
+    document.getElementById("rightTitle").textContent = (!selectedCategory || selectedCategory==="__ALL__") ? "All Items (Editable)" : `Items • ${selectedCategory}`;
+    document.getElementById("rightSub").textContent =
+      selectedDataset==="SUPPLY"
+        ? "Supplies (Consumables) — Copy deducts Qty (-1)."
+        : "Services — Copy only (no Qty).";
+  }
+
+  // =========================
+  // CATEGORY BAR
+  // =========================
+  function renderCategoryBar(){
+    const bar = document.getElementById("catBar");
+    bar.innerHTML = "";
+
+    const items = srcItems();
+    const map = new Map();
+    for(const it of items){
+      const c = it.category || (selectedDataset==="SUPPLY" ? "Uncategorized" : "Services");
+      map.set(c, (map.get(c)||0)+1);
+    }
+    const cats = Array.from(map.entries()).sort((a,b)=>b[1]-a[1]);
+
+    
+    // "ALL" pill (shows every item regardless of category, fully editable)
+    {
+      const active = selectedCategory === "__ALL__";
+      const btn = document.createElement("button");
+      btn.className = "flex items-center gap-2 px-3 py-2 rounded-2xl border font-extrabold whitespace-nowrap transition";
+      btn.style.background = active ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)";
+      btn.style.borderColor = "rgba(255,255,255,0.18)";
+      btn.style.boxShadow = active
+        ? "0 0 0 2px rgba(255,255,255,0.25), 0 10px 35px rgba(0,0,0,0.28)"
+        : "0 10px 28px rgba(0,0,0,0.22)";
+      btn.innerHTML = `
+        <span class="text-[18px]">🗂️</span>
+        <span class="max-w-[260px] truncate">All</span>
+        <span class="text-xs px-2 py-1 rounded-full border border-white/15 bg-black/20 text-slate-100/90">${map.size}</span>
+      `;
+      btn.onclick = () => {
+        selectedCategory = "__ALL__";
+        setSelectedPill();
+        renderCategoryBar();
+        renderMain();
+      };
+      bar.appendChild(btn);
+    }
+
+for(const [cat,count] of cats){
+      const active = cat === selectedCategory;
+      const st = hashStyleForCategory(cat);
+
+      const btn = document.createElement("button");
+      btn.className = "flex items-center gap-2 px-3 py-2 rounded-2xl border font-extrabold whitespace-nowrap transition";
+      btn.style.background = active ? "rgba(255,255,255,0.12)" : st.bg;
+      btn.style.borderColor = st.bd;
+      btn.style.boxShadow = active
+        ? `0 0 0 2px ${st.glow}, 0 10px 35px rgba(0,0,0,0.28)`
+        : `0 10px 28px rgba(0,0,0,0.22)`;
+
+      btn.innerHTML = `
+        <span class="text-[18px]">${stickerForCategory(cat)}</span>
+        <span class="max-w-[260px] truncate">${escapeHtml(cat)}</span>
+        <span class="text-xs px-2 py-1 rounded-full border border-white/15 bg-black/20 text-slate-100/90">${count}</span>
+      `;
+
+      btn.onclick = () => {
+        selectedCategory = cat;
+        setSelectedPill();
+        renderCategoryBar();
+        renderMain();
+      };
+
+      bar.appendChild(btn);
+    }
+  }
+
+  // =========================
+  // ITEMS VIEW: GLOBAL SEARCH
+  // =========================
+  function renderMain(){
+    if(currentView !== "ITEMS") return;
+
+    const body = document.getElementById("itemsBody");
+    const empty = document.getElementById("emptyState");
+    body.innerHTML = "";
+
+    const q = norm(document.getElementById("searchBox").value);
+    const items = srcItems();
+
+    document.getElementById("thQty").classList.toggle("hidden", selectedDataset !== "SUPPLY");
+
+    let filtered = [];
+
+    if(q){
+      filtered = items.filter(it => {
+        const name = norm(it.itemName);
+        const code = norm(it.itemCode);
+        const cat  = norm(it.category || "");
+        return name.includes(q) || code.includes(q) || cat.includes(q);
+      });
+    } else {
+      if(!selectedCategory){
+        empty.classList.remove("hidden");
+        empty.textContent = "Select a category (or All).";
+        return;
+      }
+      if(selectedCategory === "__ALL__"){
+        filtered = items.slice();
+      } else {
+        filtered = items.filter(it => {
+          const c = it.category || (selectedDataset==="SUPPLY" ? "Uncategorized" : "Services");
+          return c === selectedCategory;
+        });
+      }
+    }
+
+    if(!filtered.length){
+      empty.classList.remove("hidden");
+      empty.textContent = "No items found.";
+      return;
+    }
+    empty.classList.add("hidden");
+
+    const favSet = selectedDataset==="SUPPLY" ? favSup : favSrv;
+
+    if(q){
+      filtered.sort((a,b) => {
+        const ca = String(a.category||"").localeCompare(String(b.category||""));
+        if(ca !== 0) return ca;
+        return String(a.itemName||"").localeCompare(String(b.itemName||""));
+      });
+    }
+
+    for(let i=0;i<filtered.length;i++){
+      const it = filtered[i];
+      const key = itemKey(it);
+      const fav = favSet.has(key);
+
+      const catName = it.category || (selectedDataset==="SUPPLY" ? "Uncategorized" : "Services");
+      const catStyle = hashStyleForCategory(catName);
+
+      const badgeId = `saved_${selectedDataset}_${i}_${Math.random().toString(16).slice(2)}`;
+
+      const catPill = q
+        ? `<span class="ml-2 text-[11px] px-2 py-0.5 rounded-full border font-extrabold"
+                 style="background:${catStyle.bg}; border-color:${catStyle.bd};">
+              ${stickerForCategory(catName)} ${escapeHtml(catName)}
+           </span>`
+        : "";
+
+      let qtyTd = "";
+      if(selectedDataset==="SUPPLY"){
+        const qty = Number(qtyState[key] ?? 0);
+        const cls = qty <= 0
+          ? "border-rose-400/40 bg-rose-500/10 text-rose-100"
+          : "border-emerald-400/40 bg-emerald-500/10 text-emerald-100";
+        qtyTd = `
+          <td class="py-2 px-2">
+            <span class="inline-flex min-w-[52px] justify-center px-2 py-1 rounded-full border ${cls} font-extrabold">
+              ${Number.isFinite(qty) ? qty : 0}
+            </span>
+          </td>`;
+      }
+
+      const tr = document.createElement("tr");
+      tr.className = "border-b border-white/10 hover:bg-white/5";
+
+      tr.innerHTML = `
+        <td class="py-2 px-2">
+          <span class="text-[18px]">${stickerForItem(it)}</span>
+        </td>
+
+        <td class="py-2 px-2">
+          <button class="w-9 h-9 rounded-xl border ${fav ? "border-pink-400/40 bg-pink-500/15" : "border-white/10 bg-white/5"} hover:bg-white/10 flex items-center justify-center"
+                  title="Favorite"
+                  onclick='toggleFavorite(${JSON.stringify(key)})'>
+            <span class="text-[16px]">${fav ? "❤️" : "🤍"}</span>
+          </button>
+        </td>
+
+        <td class="py-2 px-2 font-extrabold font-mono text-slate-100/90">${escapeHtml(it.itemCode || "")}</td>
+
+        <td class="py-2 px-2 font-semibold text-slate-100">
+          ${escapeHtml(it.itemName || "")}
+          ${catPill}
+        </td>
+
+        <td class="py-2 px-2">
+          <div class="flex items-center gap-2">
+            <select class="w-full text-xs px-3 py-2 rounded-2xl border border-white/10 bg-black/30 font-extrabold"
+                    onchange="changeItemCategory(${JSON.stringify(it.type)}, ${JSON.stringify(itemKey(it))}, this.value, ${JSON.stringify(badgeId)})">
+              ${buildItemCategoryOptions(it.type, it.category)}
+            </select>
+
+            <span id="${badgeId}" class="hidden text-xs px-2 py-1 rounded-full border border-emerald-400/40 bg-emerald-500/10 text-emerald-100 font-extrabold">
+              Saved ✅
+            </span>
+          </div>
+        </td>
+
+        ${qtyTd}
+
+        <td class="py-2 px-2">
+          <button class="px-3 py-2 rounded-xl border border-blue-400/30 bg-blue-500/15 hover:bg-blue-500/20 font-extrabold"
+                  onclick='copyAndMaybeDeduct(${JSON.stringify(it)})'>
+            Copy
+          </button>
+        </td>
+      `;
+
+      body.appendChild(tr);
+    }
+  }
+
+  // =========================
+  // ZERO STOCK VIEW
+  // =========================
+  function getZeroStockSupplies(){
+    const rows = [];
+    for(const it of supplies){
+      const key = itemKey(it);
+      const qty = Number(qtyState[key] ?? 0);
+      if(qty === 0) rows.push(it);
+    }
+    return rows;
+  }
+
+  function renderZeroStock(){
+    const list = getZeroStockSupplies();
+    document.getElementById("zeroCountBadge").textContent = String(list.length);
+    const zec = document.getElementById("zeroEmailCountBadge");
+    if(zec) zec.textContent = String(list.length);
+
+    const body = document.getElementById("zeroBody");
+    const empty = document.getElementById("zeroEmpty");
+    body.innerHTML = "";
+
+    if(!list.length){
+      empty.classList.remove("hidden");
+      return;
+    }
+    empty.classList.add("hidden");
+
+    for(const it of list){
+      const tr = document.createElement("tr");
+      tr.className = "border-b border-white/10 hover:bg-white/5";
+      tr.innerHTML = `
+        <td class="py-2 px-2"><span class="text-[18px]">🟥</span></td>
+        <td class="py-2 px-2 font-extrabold">${escapeHtml(it.category || "Uncategorized")}</td>
+        <td class="py-2 px-2 font-extrabold font-mono">${escapeHtml(it.itemCode || "")}</td>
+        <td class="py-2 px-2 font-semibold">${escapeHtml(it.itemName || "")}</td>
+        <td class="py-2 px-2">
+          <button class="px-3 py-2 rounded-xl border border-blue-400/30 bg-blue-500/15 hover:bg-blue-500/20 font-extrabold"
+                  onclick='copyOnly(${JSON.stringify(it.itemCode || "")})'>Copy</button>
+        </td>
+      `;
+      body.appendChild(tr);
+    }
+  }
+
+
+  // =========================
+  // ZERO EMAIL VIEW
+  // =========================
+  function renderZeroEmail(){
+    const list = getZeroStockSupplies();
+    document.getElementById("zeroEmailCountBadge").textContent = String(list.length);
+
+    const body = document.getElementById("zeroEmailBody");
+    const empty = document.getElementById("zeroEmailEmpty");
+    body.innerHTML = "";
+
+    if(!list.length){
+      empty.classList.remove("hidden");
+      return;
+    }
+    empty.classList.add("hidden");
+
+    for(const it of list){
+      const tr = document.createElement("tr");
+      tr.className = "border-b border-white/10 hover:bg-white/5";
+      tr.innerHTML = `
+        <td class="py-2 px-2"><span class="text-[18px]">🟥</span></td>
+        <td class="py-2 px-2 font-extrabold">${escapeHtml(it.category || "Uncategorized")}</td>
+        <td class="py-2 px-2 font-extrabold font-mono">${escapeHtml(it.itemCode || "")}</td>
+        <td class="py-2 px-2 font-semibold">${escapeHtml(it.itemName || "")}</td>
+      `;
+      body.appendChild(tr);
+    }
+  }
+
+  function sendZeroStockExcelEmail(){
+    const email = String(document.getElementById("zeroEmailTo").value || "").trim();
+    if(!email){
+      toast("Please enter recipient email");
+      return;
+    }
+
+    const btn = document.getElementById("btnSendZeroEmail");
+    btn.disabled = true;
+
+    google.script.run
+      .withSuccessHandler(res => {
+        btn.disabled = false;
+        if(res?.ok){
+          toast("Email sent ✅");
+        } else {
+          toast("Email not sent: " + (res?.message || "Unknown error"));
+        }
+      })
+      .withFailureHandler(err => {
+        btn.disabled = false;
+        toast("Email error: " + (err?.message || err));
+      })
+      .sendZeroStockExcelEmail(email);
+  }
+
+  async function copyOnly(code){
+    if(!code){ toast("No code to copy"); return; }
+    try{
+      await navigator.clipboard.writeText(code);
+      toast("Copied: " + code);
+    }catch(e){
+      toast("Copy failed");
+    }
+  }
+
+  // =========================
+  // UNMATCHED VIEW
+  // =========================
+  function updateUnmatchedBadges(){
+    document.getElementById("unmatchedCountBadge").textContent =
+      String((unmatchedSupplies?.length || 0) + (unmatchedXlsRows?.length || 0));
+    document.getElementById("unmSupBadge").textContent = String(unmatchedSupplies?.length || 0);
+    document.getElementById("unmXlsBadge").textContent = String(unmatchedXlsRows?.length || 0);
+  }
+
+  function renderUnmatched(){
+    updateUnmatchedBadges();
+    const q = norm(document.getElementById("unmSearch").value);
+
+    // ---- Unmatched supplies
+    const supBody = document.getElementById("unmSupBody");
+    const supEmpty = document.getElementById("unmSupEmpty");
+    supBody.innerHTML = "";
+
+    const supFiltered = (unmatchedSupplies || []).filter(it => {
+      if(!q) return true;
+      return norm(it.itemName).includes(q) || norm(it.itemCode).includes(q) || norm(it.category).includes(q);
+    });
+
+    if(!supFiltered.length){
+      supEmpty.classList.remove("hidden");
+    } else {
+      supEmpty.classList.add("hidden");
+      for(const it of supFiltered){
+        const key = itemKey(it);
+        const sel = selectionUnmSup.has(key);
+        const tr = document.createElement("tr");
+        tr.className = "border-b border-white/10 hover:bg-white/5";
+        tr.innerHTML = `
+          <td class="py-2 px-2">
+            <input type="checkbox" ${sel ? "checked" : ""} onclick='toggleUnmSupSelect(${JSON.stringify(key)})'>
+          </td>
+          <td class="py-2 px-2"><span class="text-[18px]">⚠️</span></td>
+          <td class="py-2 px-2 font-extrabold">${escapeHtml(it.category || "Uncategorized")}</td>
+          <td class="py-2 px-2 font-extrabold font-mono">${escapeHtml(it.itemCode || "")}</td>
+          <td class="py-2 px-2 font-semibold">${escapeHtml(it.itemName || "")}</td>
+        `;
+        supBody.appendChild(tr);
+      }
+    }
+
+    // ---- Unmatched XLS (GROUPED BY suggested category)
+    const xBody = document.getElementById("unmXlsBody");
+    const xEmpty = document.getElementById("unmXlsEmpty");
+    xBody.innerHTML = "";
+
+    const xFiltered = (unmatchedXlsRows || []).filter(r => {
+      if(!q) return true;
+      return norm(r.name).includes(q) || norm(r.code).includes(q) || norm(r.suggestedCategory).includes(q) || norm(r.method).includes(q);
+    });
+
+    if(!xFiltered.length){
+      xEmpty.classList.remove("hidden");
+    } else {
+      xEmpty.classList.add("hidden");
+
+      const grp = new Map();
+      for(const r of xFiltered){
+        const cat = r.suggestedCategory || "Other / Review";
+        if(!grp.has(cat)) grp.set(cat, []);
+        grp.get(cat).push(r);
+      }
+
+      const cats = Array.from(grp.keys()).sort((a,b)=>a.localeCompare(b));
+
+      for(const cat of cats){
+        const st = hashStyleForCategory(cat);
+        const head = document.createElement("tr");
+        head.className = "border-b border-white/10";
+        head.innerHTML = `
+          <td class="py-2 px-2" colspan="4">
+            <div class="flex items-center gap-2 px-3 py-2 rounded-2xl border"
+                 style="background:${st.bg}; border-color:${st.bd};">
+              <span class="text-[18px]">🏷️</span>
+              <span class="font-extrabold">${escapeHtml(cat)}</span>
+              <span class="text-xs px-2 py-0.5 rounded-full border border-white/10 bg-black/20">${grp.get(cat).length}</span>
+            </div>
+          </td>
+        `;
+        xBody.appendChild(head);
+
+        for(const r of grp.get(cat)){
+          const rowKey = r.rowKey || `X:${norm(r.code)}|${norm(r.name)}`;
+          const sel = selectionUnmXls.has(rowKey);
+
+          const tr = document.createElement("tr");
+          tr.className = "border-b border-white/10 hover:bg-white/5";
+          tr.innerHTML = `
+            <td class="py-2 px-2">
+              <input type="checkbox" ${sel ? "checked" : ""} onclick='toggleUnmXlsSelect(${JSON.stringify(rowKey)})'>
+            </td>
+            <td class="py-2 px-2 font-extrabold font-mono">${escapeHtml(r.code || "")}</td>
+            <td class="py-2 px-2 font-semibold">
+              <div class="flex flex-col gap-1">
+                <div>
+                  ${escapeHtml(r.name || "")}
+                  ${methodBadgeHtml(r.method)}
+                </div>
+
+                <div class="flex items-center gap-2">
+                  <span class="text-[11px] text-slate-300 font-bold">Category:</span>
+                  <select class="text-xs px-2 py-1 rounded-xl border border-white/10 bg-black/30"
+                          onchange="setManualOverride(${JSON.stringify(rowKey)}, this.value)">
+                    ${buildOverrideOptions(r.suggestedCategory)}
+                  </select>
+                  <span class="text-[11px] text-slate-400 font-semibold">(saved)</span>
+                </div>
+              </div>
+            </td>
+            <td class="py-2 px-2 font-extrabold">${Number(r.qty ?? 0)}</td>
+          `;
+          xBody.appendChild(tr);
+        }
+      }
+    }
+  }
+
+  function toggleUnmSupSelect(key){
+    if(selectionUnmSup.has(key)) selectionUnmSup.delete(key);
+    else selectionUnmSup.add(key);
+  }
+  function toggleUnmXlsSelect(key){
+    if(selectionUnmXls.has(key)) selectionUnmXls.delete(key);
+    else selectionUnmXls.add(key);
+  }
+
+  // =========================
+  // FAVORITES
+  // =========================
+  function toggleFavorite(key){
+    const set = selectedDataset==="SUPPLY" ? favSup : favSrv;
+    if(set.has(key)) set.delete(key);
+    else set.add(key);
+    saveFavSet(selectedDataset, set);
+    toast(set.has(key) ? "Added to favorites" : "Removed from favorites");
+    renderMain();
+    if(!document.getElementById("favPanel").classList.contains("hidden")){
+      renderFavorites(selectedDataset);
+    }
+  }
+
+  function toggleFavoritesPanel(){
+    const p = document.getElementById("favPanel");
+    p.classList.toggle("hidden");
+    renderFavorites("SUPPLY");
+  }
+
+  function renderFavorites(forceDataset){
+    const ds = forceDataset || (document.getElementById("favTabSup").className.includes("pink") ? "SUPPLY" : "SERVICE");
+    const list = document.getElementById("favList");
+    const q = norm(document.getElementById("favSearch").value);
+
+    document.getElementById("favTabSup").className =
+      ds==="SUPPLY"
+        ? "flex-1 px-3 py-2 rounded-xl border border-pink-400/30 bg-pink-500/15 hover:bg-pink-500/20 font-extrabold"
+        : "flex-1 px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 font-extrabold";
+
+    document.getElementById("favTabSrv").className =
+      ds==="SERVICE"
+        ? "flex-1 px-3 py-2 rounded-xl border border-pink-400/30 bg-pink-500/15 hover:bg-pink-500/20 font-extrabold"
+        : "flex-1 px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 font-extrabold";
+
+    const set = ds==="SUPPLY" ? favSup : favSrv;
+    const items = (ds==="SUPPLY" ? supplies : services);
+
+    const favItems = [];
+    for(const it of items){
+      const key = itemKey(it);
+      if(set.has(key)) favItems.push(it);
+    }
+
+    const out = favItems.filter(it => {
+      if(!q) return true;
+      return norm(it.itemName).includes(q) || norm(it.itemCode).includes(q);
+    });
+
+    list.innerHTML = "";
+    if(!out.length){
+      list.innerHTML = `<div class="text-slate-300 font-semibold">No favorites yet.</div>`;
+      return;
+    }
+
+    for(const it of out){
+      const key = itemKey(it);
+      const qty = ds==="SUPPLY" ? Number(qtyState[key] ?? 0) : null;
+      const qtyHtml = ds==="SUPPLY"
+        ? `<span class="text-xs px-2 py-1 rounded-full border ${qty<=0 ? "border-rose-400/40 bg-rose-500/10 text-rose-100" : "border-emerald-400/40 bg-emerald-500/10 text-emerald-100"} font-extrabold">${qty}</span>`
+        : ``;
+
+      const row = document.createElement("div");
+      row.className = "rounded-2xl border border-white/10 bg-white/5 p-3 hover:bg-white/10";
+      row.innerHTML = `
+        <div class="flex items-start justify-between gap-2">
+          <div class="flex gap-3 min-w-0">
+            <span class="text-[22px] mt-0.5">${stickerForItem(it)}</span>
+            <div class="min-w-0">
+              <div class="font-extrabold truncate">${escapeHtml(it.itemName || "")}</div>
+              <div class="text-xs text-slate-300 font-semibold mt-1 flex items-center gap-2">
+                <span class="font-mono">${escapeHtml(it.itemCode || "")}</span>
+                ${qtyHtml}
+              </div>
+            </div>
+          </div>
+
+          <div class="flex gap-2">
+            <button class="w-10 h-10 rounded-xl border border-blue-400/30 bg-blue-500/15 hover:bg-blue-500/20 font-extrabold"
+                    title="Copy"
+                    onclick='copyAndMaybeDeduct(${JSON.stringify(it)})'>📋</button>
+            <button class="w-10 h-10 rounded-xl border border-pink-400/30 bg-pink-500/15 hover:bg-pink-500/20 font-extrabold"
+                    title="Remove favorite"
+                    onclick='removeFavoriteFromPanel(${JSON.stringify(ds)}, ${JSON.stringify(key)})'>❤️</button>
+          </div>
+        </div>
+      `;
+      list.appendChild(row);
+    }
+  }
+
+  function removeFavoriteFromPanel(ds, key){
+    const set = ds==="SUPPLY" ? favSup : favSrv;
+    set.delete(key);
+    saveFavSet(ds, set);
+    toast("Removed from favorites");
+    renderFavorites(ds);
+    renderMain();
+  }
+
+  // =========================
+  // COPY + DEDUCT + UNDO
+  // =========================
+  async function copyAndMaybeDeduct(it){
+    const code = it.itemCode || "";
+    if(!code){ toast("No code to copy"); return; }
+
+    try{
+      await navigator.clipboard.writeText(code);
+      toast("Copied: " + code);
+
+      if(String(it.type||"").toUpperCase() === "SUPPLY"){
+        const key = itemKey(it);
+        const cur = Number(qtyState[key] ?? 0);
+
+        if(cur <= 0){
+          toast("Qty is 0 (not deducted)");
+          return;
+        }
+
+        lastAction = { key, prevQty: cur };
+        document.getElementById("btnUndo").disabled = false;
+
+        qtyState[key] = cur - 1;
+
+        google.script.run
+          .withFailureHandler(err => toast("Save error: " + (err?.message || err)))
+          .saveQtyState(qtyState, null);
+
+        renderMain();
+        renderZeroStock();
+        if(currentView==="UNMATCHED") renderUnmatched();
+        if(!document.getElementById("favPanel").classList.contains("hidden")){
+          renderFavorites(selectedDataset);
+        }
+      }
+    }catch(e){
+      toast("Copy failed");
+    }
+  }
+
+  function undoLast(){
+    if(!lastAction) return;
+
+    qtyState[lastAction.key] = lastAction.prevQty;
+
+    google.script.run
+      .withSuccessHandler(() => toast("Undo done"))
+      .withFailureHandler(() => toast("Undo save error"))
+      .saveQtyState(qtyState, null);
+
+    lastAction = null;
+    document.getElementById("btnUndo").disabled = true;
+
+    renderMain();
+    renderZeroStock();
+    if(currentView==="UNMATCHED") renderUnmatched();
+    if(!document.getElementById("favPanel").classList.contains("hidden")){
+      renderFavorites(selectedDataset);
+    }
+  }
+
+  // =========================
+  // XLS MATCHING + BUILD UNMATCHED LISTS
+  // =========================
+  async function processXls(){
+    const f = document.getElementById("xlsFile").files?.[0];
+    if(!f){ toast("No file selected"); return; }
+
+    try{
+      setStatus("Reading XLS…");
+      const buf = await f.arrayBuffer();
+      const wb = XLSX.read(buf, { type:"array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const json = XLSX.utils.sheet_to_json(ws, { defval:"" });
+      if(!json.length){ toast("XLS has no rows"); setStatus("Ready"); return; }
+
+      const headers = Object.keys(json[0] || {});
+      const map = detectXlsColumns(headers);
+
+      const byName = new Map();
+      const byCode = new Map();
+      const xlsRowsNorm = [];
+
+      for(const row of json){
+        const name = String(row[map.itemName] ?? "").trim();
+        const code = String(row[map.itemCode] ?? "").trim();
+        const qtyRaw = row[map.qty];
+        const qty = Number(String(qtyRaw).replace(/,/g,"").trim());
+        const qtyNum = Number.isFinite(qty) ? qty : 0;
+
+        const nName = norm(name);
+        const nCode = norm(code);
+
+        if(nName) byName.set(nName, qtyNum);
+        if(nCode) byCode.set(nCode, qtyNum);
+
+        xlsRowsNorm.push({ code, name, qty: qtyNum, nCode, nName });
+      }
+
+      const newState = { ...qtyState };
+      let matched = 0;
+
+      const unmSup = [];
+      for(const it of supplies){
+        const key = itemKey(it);
+        const sName = norm(it.itemName);
+        const sCode = norm(it.itemCode);
+
+        let q = null;
+
+        // NAME first
+        if(sName && byName.has(sName)) q = byName.get(sName);
+        else if(sCode && byCode.has(sCode)) q = byCode.get(sCode);
+
+        if(q !== null){
+          newState[key] = q;
+          matched++;
+        } else {
+          unmSup.push(it);
+        }
+      }
+
+      const supplyNames = new Set(supplies.map(s => norm(s.itemName)));
+      const supplyCodes = new Set(supplies.map(s => norm(s.itemCode)));
+
+      const unmXls = [];
+      for(const r of xlsRowsNorm){
+        const okByName = r.nName && supplyNames.has(r.nName);
+        const okByCode = r.nCode && supplyCodes.has(r.nCode);
+
+        if(!okByName && !okByCode){
+          const rowKey = `X:${norm(r.code)}|${norm(r.name)}`;
+
+          if(unmatchedOverrides && unmatchedOverrides[rowKey]){
+            unmXls.push({
+              rowKey,
+              code: r.code,
+              name: r.name,
+              qty: r.qty,
+              suggestedCategory: unmatchedOverrides[rowKey],
+              method: "MANUAL"
+            });
+          } else {
+            const sug = suggestedCategoryForXlsRow(r.name);
+            unmXls.push({
+              rowKey,
+              code: r.code,
+              name: r.name,
+              qty: r.qty,
+              suggestedCategory: sug.category,
+              method: sug.method
+            });
+          }
+        }
+      }
+
+      qtyState = newState;
+      unmatchedSupplies = unmSup;
+      unmatchedXlsRows = unmXls;
+
+      selectionUnmSup = new Set();
+      selectionUnmXls = new Set();
+
+      const meta = {
+        uploadedAtISO: new Date().toISOString(),
+        fileName: f.name,
+        rowsCount: json.length
+      };
+
+      setStatus("Saving…");
+      google.script.run
+        .withSuccessHandler(() => {
+          lastMeta = meta;
+          updateLastMetaUI();
+          setStatus("Ready");
+
+          toast(`Matched supplies: ${matched}. Unmatched supplies: ${unmatchedSupplies.length}. Unmatched XLS rows: ${unmatchedXlsRows.length}.`);
+
+          renderMain();
+          renderZeroStock();
+          updateUnmatchedBadges();
+          if(currentView==="UNMATCHED") renderUnmatched();
+
+          if(!document.getElementById("favPanel").classList.contains("hidden")){
+            renderFavorites(selectedDataset);
+          }
+        })
+        .withFailureHandler(() => {
+          setStatus("Ready (save error)");
+          toast("Save error");
+        })
+        .saveQtyState(qtyState, meta);
+
+    }catch(e){
+      setStatus("Ready");
+      toast("XLS read error");
+    }
+  }
+
+  function detectXlsColumns(headers){
+    const low = headers.map(h => String(h).toLowerCase().trim());
+    const pick = (keys) => {
+      for(const k of keys){
+        const idx = low.findIndex(x => x === k || x.includes(k));
+        if(idx >= 0) return headers[idx];
+      }
+      return null;
+    };
+
+    const itemName = pick(["item name","name","description","item description"]) || headers[0];
+    const itemCode = pick(["item code","code","material code","itemid","item_id","id"]) || headers[1] || headers[0];
+    const qty = pick(["qty","quantity","balance","stock","available","on hand"]) || headers[2] || headers[0];
+    return { itemName, itemCode, qty };
+  }
+
+  // =========================
+  // EXPORTS
+  // =========================
+  function buildAllRows(){
+    const rows = [];
+    for(const it of supplies){
+      const key = itemKey(it);
+      rows.push({
+        Dataset: "SUPPLY",
+        Category: it.category || "Uncategorized",
+        ItemCode: it.itemCode || "",
+        ItemName: it.itemName || "",
+        Qty: Number(qtyState[key] ?? 0),
+      });
+    }
+    for(const it of services){
+      rows.push({
+        Dataset: "SERVICE",
+        Category: it.category || "Services",
+        ItemCode: it.itemCode || "",
+        ItemName: it.itemName || "",
+        Qty: "",
+      });
+    }
+    return rows;
+  }
+
+  function buildZeroRows(){
+    const rows = [];
+    for(const it of supplies){
+      const key = itemKey(it);
+      const qty = Number(qtyState[key] ?? 0);
+      if(qty === 0){
+        rows.push({
+          Category: it.category || "Uncategorized",
+          ItemCode: it.itemCode || "",
+          ItemName: it.itemName || ""
+        });
+      }
+    }
+    return rows;
+  }
+
+  function exportAllExcel(){
+    try{
+      const rows = buildAllRows();
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "All");
+      XLSX.writeFile(wb, "ICU_Encoding_All.xlsx");
+      toast("Exported All (Excel)");
+    }catch(e){ toast("Export error"); }
+  }
+
+  function exportAllPDF(){
+    try{
+      const rows = buildAllRows();
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ orientation:"landscape", unit:"pt", format:"a4" });
+
+      doc.setFontSize(14);
+      doc.text("ICU Encoding Export (All)", 40, 40);
+      doc.setFontSize(10);
+      doc.text("Generated: " + new Date().toLocaleString(), 40, 60);
+
+      const head = [[ "Dataset","Category","Item Code","Item Name","Qty" ]];
+      const body = rows.map(r => [r.Dataset, r.Category, r.ItemCode, r.ItemName, String(r.Qty ?? "")]);
+
+      doc.autoTable({
+        head, body, startY: 80,
+        styles: { fontSize: 8, cellPadding: 4 },
+        headStyles: { fillColor: [30,60,120] },
+        margin: { left: 30, right: 30 }
+      });
+
+      doc.save("ICU_Encoding_All.pdf");
+      toast("Exported All (PDF)");
+    }catch(e){ toast("PDF export error"); }
+  }
+
+  function exportZeroExcel(){
+    try{
+      const rows = buildZeroRows();
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "ZeroStock");
+      XLSX.writeFile(wb, "ICU_Zero_Stock_Supplies.xlsx");
+      toast("Exported Zero Stock (Excel)");
+    }catch(e){ toast("Export error"); }
+  }
+
+  function exportZeroPDF(){
+    try{
+      const rows = buildZeroRows();
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ orientation:"portrait", unit:"pt", format:"a4" });
+
+      doc.setFontSize(14);
+      doc.text("ICU Zero Stock Supplies", 40, 40);
+      doc.setFontSize(10);
+      doc.text("Generated: " + new Date().toLocaleString(), 40, 60);
+
+      const head = [[ "Category","Item Code","Item Name" ]];
+      const body = rows.map(r => [r.Category, r.ItemCode, r.ItemName]);
+
+      doc.autoTable({
+        head, body, startY: 80,
+        styles: { fontSize: 9, cellPadding: 5 },
+        headStyles: { fillColor: [120,30,60] },
+        margin: { left: 30, right: 30 }
+      });
+
+      doc.save("ICU_Zero_Stock_Supplies.pdf");
+      toast("Exported Zero Stock (PDF)");
+    }catch(e){ toast("PDF export error"); }
+  }
+</script>
+
+
+  <!-- FOOTER -->
+  <footer class="mt-10 py-6 text-center text-xs text-slate-300/80 font-semibold">
+    Designed by Mr.Mohamed Ali Ghonim – ICU Head Nurse
+  </footer>
+
+</body>
+</html>
