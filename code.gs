@@ -29,11 +29,92 @@ const CONFIG = {
   PROP_ITEM_CATEGORY_OVERRIDES: "ICU_ITEM_CATEGORY_OVERRIDES_V1",
 };
 
-function doGet() {
+function doGet(e) {
+  const isBridge = e && e.parameter && String(e.parameter.bridge || "") === "1";
+  if (isBridge) {
+    return HtmlService.createHtmlOutput(bridgeHtml_())
+      .setTitle("ICU Encoding Bridge")
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  }
+
   return HtmlService.createHtmlOutputFromFile("index")
     .setTitle("ICU Encoding Dashboard")
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
+
+/**
+ * Bridge page for GitHub Pages (or any external host).
+ * It runs on Apps Script domain, so it can call google.script.run safely.
+ * Parent page communicates via postMessage.
+ */
+function bridgeHtml_() {
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ICU Bridge</title>
+  <style>html,body{margin:0;padding:0;background:transparent;}</style>
+</head>
+<body>
+<script>
+(() => {
+  const ALLOW = new Set([
+    "login",
+    "getDashboardData",
+    "getQtyState",
+    "saveQtyState",
+    "setUnmatchedOverride",
+    "setItemCategoryOverride",
+    "sendZeroStockExcelEmail"
+  ]);
+
+  function safeErr(err){
+    try{
+      if(!err) return "Unknown error";
+      if(typeof err === "string") return err;
+      if(err.message) return err.message;
+      return JSON.stringify(err);
+    }catch(e){
+      return "Unknown error";
+    }
+  }
+
+  window.addEventListener("message", (ev) => {
+    const d = ev.data;
+    if(!d || !d.__icuBridge || !d.id) return;
+
+    const func = String(d.func || "");
+    const args = Array.isArray(d.args) ? d.args : [];
+
+    if(!ALLOW.has(func) || typeof google === "undefined" || !google.script || !google.script.run || typeof google.script.run[func] !== "function"){
+      ev.source && ev.source.postMessage({ __icuBridge:true, id:d.id, ok:false, error:"Blocked or unknown function: " + func }, "*");
+      return;
+    }
+
+    try{
+      google.script.run
+        .withSuccessHandler((res) => {
+          ev.source && ev.source.postMessage({ __icuBridge:true, id:d.id, ok:true, res }, "*");
+        })
+        .withFailureHandler((err) => {
+          ev.source && ev.source.postMessage({ __icuBridge:true, id:d.id, ok:false, error:safeErr(err) }, "*");
+        })[func](...args);
+    }catch(err){
+      ev.source && ev.source.postMessage({ __icuBridge:true, id:d.id, ok:false, error:safeErr(err) }, "*");
+    }
+  });
+})();
+</script>
+</body>
+</html>`;
+}
+
+
+
+
 
 function login(username, password) {
   const ok =
