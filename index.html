@@ -1618,7 +1618,7 @@ for(const [cat,count] of cats){
   // =========================
   // XLS MATCHING + BUILD UNMATCHED LISTS
   // =========================
-  async function processXls(){
+  async async function processXls(){
     const f = document.getElementById("xlsFile").files?.[0];
     if(!f){ toast("No file selected"); return; }
 
