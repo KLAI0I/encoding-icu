@@ -347,6 +347,96 @@ bg-[radial-gradient(1200px_600px_at_10%_-10%,rgba(59,130,246,0.30),transparent_6
   <div id="toast" class="fixed right-4 bottom-4 hidden max-w-[560px] rounded-2xl border border-white/10 bg-slate-900/90 backdrop-blur px-4 py-3 shadow-2xl font-extrabold"></div>
 
 <script>
+
+  /* =========================================================
+     GitHub Pages compatibility (NO CORS issues)
+     - When hosted outside Apps Script, google.script.run is not available.
+     - We polyfill google.script.run using a hidden iframe bridge (Apps Script Web App).
+     - Set window.BRIDGE_URL before this script OR replace the placeholder below.
+     ========================================================= */
+  (() => {
+    const isGAS = !!(window.google && window.google.script && window.google.script.run);
+    if (isGAS) return;
+  
+    const BRIDGE_URL = (window.BRIDGE_URL || "https://script.google.com/macros/s/AKfycbyvC4bvw9HxUWgQpEB-3pblBDOXujl151PL4mwYDFT8WWYI6QOS85qD_CauVLA0Pvh8/exec?bridge=1").trim();
+  
+    // Create a hidden iframe pointing to the Apps Script bridge page
+    let iframe = document.getElementById("gasBridge");
+    if (!iframe) {
+      iframe = document.createElement("iframe");
+      iframe.id = "gasBridge";
+      iframe.style.display = "none";
+      iframe.referrerPolicy = "no-referrer";
+      iframe.src = BRIDGE_URL;
+      // Append after DOM is ready
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", () => document.body.appendChild(iframe));
+      } else {
+        document.body.appendChild(iframe);
+      }
+    }
+  
+    const pending = new Map();
+  
+    window.addEventListener("message", (ev) => {
+      const d = ev.data;
+      if (!d || !d.__icuBridge || !d.id) return;
+      const p = pending.get(d.id);
+      if (!p) return;
+      pending.delete(d.id);
+      if (d.ok) p.ok(d.res);
+      else p.fail({ message: d.error || "Bridge error" });
+    });
+  
+    function sendToBridge(func, args, ok, fail) {
+      const id = "icu_" + Math.random().toString(16).slice(2) + Date.now().toString(16);
+      pending.set(id, { ok, fail });
+  
+      const msg = { __icuBridge: true, id, func: String(func), args: Array.isArray(args) ? args : [] };
+  
+      const post = () => {
+        try {
+          iframe.contentWindow.postMessage(msg, "*");
+        } catch (e) {
+          pending.delete(id);
+          fail({ message: "Bridge postMessage failed" });
+        }
+      };
+  
+      // Wait until iframe loads
+      try {
+        if (iframe.contentWindow) post();
+        else iframe.addEventListener("load", post, { once: true });
+      } catch (e) {
+        iframe.addEventListener("load", post, { once: true });
+      }
+    }
+  
+    // Chainable google.script.run polyfill using Proxy
+    let _success = null;
+    let _failure = null;
+  
+    const runProxy = new Proxy({}, {
+      get(_t, prop) {
+        if (prop === "withSuccessHandler") return (fn) => { _success = fn; return runProxy; };
+        if (prop === "withFailureHandler") return (fn) => { _failure = fn; return runProxy; };
+  
+        // Any server function call
+        return (...args) => {
+          const ok = _success || (() => {});
+          const fail = _failure || (() => {});
+          _success = null; _failure = null;
+          sendToBridge(String(prop), args, ok, fail);
+        };
+      }
+    });
+  
+    window.google = window.google || {};
+    window.google.script = window.google.script || {};
+    window.google.script.run = runProxy;
+  })();
+
+
   // =========================
   // STATE
   // =========================
