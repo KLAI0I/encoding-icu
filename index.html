@@ -12,7 +12,99 @@
   <!-- XLSX parsing + Excel export -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
-  <!-- jsPDF + AutoTable -->
+  
+  <script>
+  // GitHub-mode polyfill for google.script.run using an Apps Script "bridge" iframe.
+  // Works on GitHub Pages without CORS changes. If running inside Apps Script HtmlService,
+  // the native google.script.run will exist and this code will do nothing.
+  (function(){
+    if (window.google && google.script && google.script.run) return;
+
+    const BRIDGE_URL = 'https://script.google.com/macros/s/AKfycbwBWOnlZdy2HBJCzKUTIZ83hGaFdalbY598pSCbYySEj66ug6yVHQ3vLZxAtWrZF-Nl/exec?bridge=1';
+
+    // Create hidden iframe
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.left = "-9999px";
+    iframe.style.top = "-9999px";
+    iframe.style.width = "1px";
+    iframe.style.height = "1px";
+    iframe.style.opacity = "0";
+    iframe.src = BRIDGE_URL;
+    document.addEventListener("DOMContentLoaded", () => document.body.appendChild(iframe));
+
+    let bridgeReady = false;
+    const pending = new Map();   // id -> {success, failure}
+    const queue = [];            // messages to send before ready
+
+    function send(msg){
+      if (!iframe.contentWindow) return;
+      iframe.contentWindow.postMessage(msg, "*");
+    }
+
+    window.addEventListener("message", (ev) => {
+      const d = ev && ev.data;
+      if (!d || d.__icu_bridge !== true) return;
+
+      if (d.type === "ready") {
+        bridgeReady = true;
+        // flush queue
+        while(queue.length) send(queue.shift());
+        // auto-start dashboard (no login)
+        try {
+          if (typeof window.refreshAll === "function") {
+            window.refreshAll();
+          }
+        } catch(e) {}
+        return;
+      }
+
+      if (d.type === "result") {
+        const cb = pending.get(d.id);
+        if (!cb) return;
+        pending.delete(d.id);
+        if (d.ok) {
+          cb.success && cb.success(d.result);
+        } else {
+          cb.failure && cb.failure(new Error(d.error || "Bridge error"));
+        }
+      }
+    });
+
+    function Runner(){
+      this._success = null;
+      this._failure = null;
+    }
+    Runner.prototype.withSuccessHandler = function(fn){ this._success = fn; return this; };
+    Runner.prototype.withFailureHandler = function(fn){ this._failure = fn; return this; };
+    Runner.prototype._call = function(fnName, args){
+      const id = "c_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      pending.set(id, { success: this._success, failure: this._failure });
+      const msg = { __icu_bridge_call: true, id, fn: fnName, args: Array.from(args||[]) };
+      // reset handlers for next call
+      this._success = null;
+      this._failure = null;
+
+      if (bridgeReady) send(msg);
+      else queue.push(msg);
+    };
+
+    const runner = new Runner();
+    const runProxy = new Proxy(runner, {
+      get(target, prop){
+        if (prop in target) return target[prop].bind(target);
+        // treat unknown properties as server function calls
+        return (...args) => target._call(String(prop), args);
+      }
+    });
+
+    window.google = window.google || {};
+    window.google.script = window.google.script || {};
+    window.google.script.run = runProxy;
+  })();
+  </script>
+
+<!-- jsPDF + AutoTable -->
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.5.29/dist/jspdf.plugin.autotable.min.js"></script>
 
@@ -20,6 +112,16 @@
     .scrollbar-hide::-webkit-scrollbar { display: none; }
     .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
   </style>
+
+<script>
+  // Auto-load dashboard when hosted inside Apps Script (no GitHub bridge needed).
+  window.addEventListener("load", function(){
+    if (window.google && google.script && google.script.run && typeof window.refreshAll === "function") {
+      try { window.refreshAll(); } catch(e){}
+    }
+  });
+</script>
+
 </head>
 
 <body class="min-h-screen text-slate-100
@@ -91,22 +193,8 @@ bg-[radial-gradient(1200px_600px_at_10%_-10%,rgba(59,130,246,0.30),transparent_6
     </div>
   </div>
 
-  <!-- LOGIN -->
-  <div id="loginOverlay" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
-    <div class="w-full max-w-md rounded-3xl border border-white/10 bg-slate-900/80 backdrop-blur p-5 shadow-2xl">
-      <div class="text-lg font-extrabold">Login</div>
-      <div class="text-sm text-slate-300 mt-1">Username/password as requested.</div>
-      <div class="mt-4 grid gap-3">
-        <input id="loginUser" class="w-full px-4 py-2 rounded-2xl border border-white/10 bg-white/5 focus:outline-none" type="text" value="icu" placeholder="Username">
-        <input id="loginPass" class="w-full px-4 py-2 rounded-2xl border border-white/10 bg-white/5 focus:outline-none" type="password" value="ghonim" placeholder="Password">
-        <button class="px-4 py-2 rounded-2xl border border-blue-400/30 bg-blue-500/15 hover:bg-blue-500/20 font-extrabold" onclick="doLogin()">Sign in</button>
-      </div>
-      <div class="text-xs text-slate-400 mt-3">Simple login only.</div>
-    </div>
-  </div>
-
   <!-- MAIN -->
-  <div id="app" class="hidden px-4 py-4">
+<div id="app" class="px-4 py-4">
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
 
       <!-- LEFT -->
@@ -347,96 +435,6 @@ bg-[radial-gradient(1200px_600px_at_10%_-10%,rgba(59,130,246,0.30),transparent_6
   <div id="toast" class="fixed right-4 bottom-4 hidden max-w-[560px] rounded-2xl border border-white/10 bg-slate-900/90 backdrop-blur px-4 py-3 shadow-2xl font-extrabold"></div>
 
 <script>
-
-  /* =========================================================
-     GitHub Pages compatibility (NO CORS issues)
-     - When hosted outside Apps Script, google.script.run is not available.
-     - We polyfill google.script.run using a hidden iframe bridge (Apps Script Web App).
-     - Set window.BRIDGE_URL before this script OR replace the placeholder below.
-     ========================================================= */
-  (() => {
-    const isGAS = !!(window.google && window.google.script && window.google.script.run);
-    if (isGAS) return;
-  
-    const BRIDGE_URL = (window.BRIDGE_URL || "https://script.google.com/macros/s/AKfycbwBWOnlZdy2HBJCzKUTIZ83hGaFdalbY598pSCbYySEj66ug6yVHQ3vLZxAtWrZF-Nl/exec?bridge=1").trim();
-  
-    // Create a hidden iframe pointing to the Apps Script bridge page
-    let iframe = document.getElementById("gasBridge");
-    if (!iframe) {
-      iframe = document.createElement("iframe");
-      iframe.id = "gasBridge";
-      iframe.style.display = "none";
-      iframe.referrerPolicy = "no-referrer";
-      iframe.src = BRIDGE_URL;
-      // Append after DOM is ready
-      if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", () => document.body.appendChild(iframe));
-      } else {
-        document.body.appendChild(iframe);
-      }
-    }
-  
-    const pending = new Map();
-  
-    window.addEventListener("message", (ev) => {
-      const d = ev.data;
-      if (!d || !d.__icuBridge || !d.id) return;
-      const p = pending.get(d.id);
-      if (!p) return;
-      pending.delete(d.id);
-      if (d.ok) p.ok(d.res);
-      else p.fail({ message: d.error || "Bridge error" });
-    });
-  
-    function sendToBridge(func, args, ok, fail) {
-      const id = "icu_" + Math.random().toString(16).slice(2) + Date.now().toString(16);
-      pending.set(id, { ok, fail });
-  
-      const msg = { __icuBridge: true, id, func: String(func), args: Array.isArray(args) ? args : [] };
-  
-      const post = () => {
-        try {
-          iframe.contentWindow.postMessage(msg, "*");
-        } catch (e) {
-          pending.delete(id);
-          fail({ message: "Bridge postMessage failed" });
-        }
-      };
-  
-      // Wait until iframe loads
-      try {
-        if (iframe.contentWindow) post();
-        else iframe.addEventListener("load", post, { once: true });
-      } catch (e) {
-        iframe.addEventListener("load", post, { once: true });
-      }
-    }
-  
-    // Chainable google.script.run polyfill using Proxy
-    let _success = null;
-    let _failure = null;
-  
-    const runProxy = new Proxy({}, {
-      get(_t, prop) {
-        if (prop === "withSuccessHandler") return (fn) => { _success = fn; return runProxy; };
-        if (prop === "withFailureHandler") return (fn) => { _failure = fn; return runProxy; };
-  
-        // Any server function call
-        return (...args) => {
-          const ok = _success || (() => {});
-          const fail = _failure || (() => {});
-          _success = null; _failure = null;
-          sendToBridge(String(prop), args, ok, fail);
-        };
-      }
-    });
-  
-    window.google = window.google || {};
-    window.google.script = window.google.script || {};
-    window.google.script.run = runProxy;
-  })();
-
-
   // =========================
   // STATE
   // =========================
@@ -821,25 +819,6 @@ bg-[radial-gradient(1200px_600px_at_10%_-10%,rgba(59,130,246,0.30),transparent_6
 
   function srcItems(){
     return selectedDataset === "SUPPLY" ? supplies : services;
-  }
-
-  // =========================
-  // LOGIN
-  // =========================
-  function doLogin(){
-    const u = document.getElementById("loginUser").value;
-    const p = document.getElementById("loginPass").value;
-
-    google.script.run.withSuccessHandler(res => {
-      if(res && res.ok){
-        document.getElementById("loginOverlay").classList.add("hidden");
-        document.getElementById("app").classList.remove("hidden");
-        refreshAll();
-      } else {
-        toast("Wrong username/password");
-      }
-    }).withFailureHandler(err => toast("Login error: " + (err?.message || err)))
-      .login(u,p);
   }
 
   // =========================
